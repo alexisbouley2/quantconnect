@@ -169,7 +169,8 @@ def opening_range_breakout_strategy(tester, current_bars, params):
 #     start_date=(2023, 1, 1),
 #     end_date=(2024, 1, 1),
 #     initial_cash=10000,
-#     resolution='minute'
+#     resolution='minute',
+#     benchmark_symbol='SPY'  # Optional: compare to benchmark
 # )
 #
 # params = {

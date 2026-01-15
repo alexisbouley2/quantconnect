@@ -61,7 +61,8 @@ class StrategyTester:
         start_date: Tuple[int, int, int],
         end_date: Tuple[int, int, int],
         initial_cash: float = 10000,
-        resolution: str = 'minute'  # 'minute', 'hour', 'daily'
+        resolution: str = 'minute',  # 'minute', 'hour', 'daily'
+        benchmark_symbol: Optional[str] = None  # Optional benchmark for comparison (e.g., 'SPY')
     ):
         self.qb = QuantBook()
         self.symbols = symbols
@@ -69,6 +70,7 @@ class StrategyTester:
         self.end_date = datetime(*end_date)
         self.initial_cash = initial_cash
         self.resolution = resolution
+        self.benchmark_symbol = benchmark_symbol
         
         # Trading state
         self.cash = initial_cash
@@ -78,13 +80,14 @@ class StrategyTester:
         
         # Data storage
         self.data: Dict[str, pd.DataFrame] = {}  # symbol -> DataFrame
+        self.benchmark_data: Optional[pd.DataFrame] = None
         self.current_time: datetime = None
         
         # Load data
         self._load_data()
         
     def _load_data(self):
-        """Load historical data for all symbols"""
+        """Load historical data for all symbols and benchmark"""
         resolution_map = {
             'minute': Resolution.MINUTE,
             'hour': Resolution.HOUR,
@@ -113,6 +116,20 @@ class StrategyTester:
             df['time'] = df.index.time
             
             self.data[symbol_str] = df
+        
+        # Load benchmark data if specified
+        if self.benchmark_symbol:
+            benchmark = self.qb.add_equity(self.benchmark_symbol, resolution_map[self.resolution])
+            benchmark_history = self.qb.history(
+                [benchmark.symbol],
+                self.start_date,
+                self.end_date,
+                resolution_map[self.resolution]
+            )
+            
+            self.benchmark_data = pd.DataFrame({
+                'close': benchmark_history['close'].unstack(level=0)[benchmark.symbol]
+            })
     
     def run(
         self,
@@ -354,11 +371,34 @@ class StrategyTester:
         
         # Equity curve
         times, equity = zip(*self.equity_curve)
-        axes[0].plot(times, equity, linewidth=2)
+        axes[0].plot(times, equity, linewidth=2, label='Strategy', color='blue')
+        
+        # Add benchmark if available
+        if self.benchmark_data is not None:
+            # Calculate benchmark equity curve (normalized to initial cash)
+            benchmark_prices = self.benchmark_data['close']
+            if len(benchmark_prices) > 0:
+                benchmark_start_price = benchmark_prices.iloc[0]
+                benchmark_equity = (benchmark_prices / benchmark_start_price) * self.initial_cash
+                
+                # Align benchmark with strategy timestamps (exact match)
+                benchmark_aligned = []
+                for timestamp in times:
+                    if timestamp in benchmark_prices.index:
+                        benchmark_aligned.append((timestamp, benchmark_equity.loc[timestamp]))
+                
+                if benchmark_aligned:
+                    bench_times, bench_equity_vals = zip(*benchmark_aligned)
+                    axes[0].plot(bench_times, bench_equity_vals, linewidth=2, 
+                               label=f'Benchmark ({self.benchmark_symbol})', 
+                               color='orange', linestyle='--', alpha=0.7)
+        
         axes[0].set_title(f'Equity Curve (Return: {stats["total_return"]*100:.2f}%)')
         axes[0].set_ylabel('Equity ($)')
         axes[0].grid(True, alpha=0.3)
         axes[0].axhline(y=self.initial_cash, color='gray', linestyle='--', alpha=0.5)
+        if self.benchmark_data is not None:
+            axes[0].legend()
         
         # Drawdown
         equity_series = pd.Series(equity, index=times)
