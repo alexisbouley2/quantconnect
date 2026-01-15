@@ -113,12 +113,6 @@ class StrategyTester:
             df['time'] = df.index.time
             
             self.data[symbol_str] = df
-            
-        print(f"✓ Loaded data for {len(self.symbols)} symbols")
-        print(f"  Period: {self.start_date.date()} to {self.end_date.date()}")
-        print(f"  Resolution: {self.resolution}")
-        for symbol in self.symbols:
-            print(f"  {symbol}: {len(self.data[symbol])} bars")
     
     def run(
         self,
@@ -184,8 +178,6 @@ class StrategyTester:
                 print(f"  Progress: {progress:.1f}%", end='\r')
         
         print(f"✓ Backtest complete")
-        print(f"  Total trades: {len(self.trades)}")
-        print(f"  Open positions: {len(self.positions)}")
         
         return self
     
@@ -425,6 +417,10 @@ class StrategyTester:
     def has_position(self, symbol: str) -> bool:
         """Check if currently holding position in symbol"""
         return symbol in self.positions
+    
+    def get_open_positions_count(self) -> int:
+        """Get the number of currently open positions"""
+        return len(self.positions)
     
     def update_position_metadata(self, symbol: str, metadata: Dict):
         """Update metadata for open position (e.g., high_water_mark)"""

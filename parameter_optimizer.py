@@ -16,52 +16,138 @@ def optimize_parameters(
     tester_config: Dict,
     strategy_func: Callable,
     param_grid: Dict[str, List],
-    metric: str = 'sharpe_ratio'
+    metric: str = 'sharpe_ratio',
+    max_passes: int = 10
 ) -> pd.DataFrame:
     """
-    Run grid search over parameter space
+    Run coordinate descent optimization over parameter space
+    
+    Optimizes one parameter at a time, using best values found so far as defaults
+    for subsequent parameters. Repeats until convergence or max_passes reached.
     
     Args:
         tester_config: Config for StrategyTester
         strategy_func: Strategy function to test
-        param_grid: Dictionary of parameter names to lists of values
+        param_grid: Dictionary of parameter names to lists of values to test
         metric: Metric to optimize ('sharpe_ratio', 'total_return', etc.)
+        max_passes: Maximum number of optimization passes (default: 10)
         
     Returns:
         DataFrame with all results sorted by metric
     """
-    from itertools import product
-    
-    # Generate all parameter combinations
     param_names = list(param_grid.keys())
-    param_values = list(param_grid.values())
-    combinations = list(product(*param_values))
     
-    print(f"\nTesting {len(combinations)} parameter combinations...")
+    # Extract default values (middle value of each parameter list)
+    def get_default_value(values):
+        """Get middle value from list"""
+        # For time strings (HH:MM format), convert to minutes for sorting
+        if isinstance(values[0], str) and ':' in str(values[0]):
+            def time_to_minutes(time_str):
+                hour, minute = map(int, str(time_str).split(':'))
+                return hour * 60 + minute
+            sorted_vals = sorted(values, key=time_to_minutes)
+        else:
+            sorted_vals = sorted(values) if not isinstance(values[0], str) else values
+        mid_idx = len(sorted_vals) // 2
+        return sorted_vals[mid_idx]
+    
+    defaults = {name: get_default_value(param_grid[name]) for name in param_names}
+    
+    print(f"\n▶ Coordinate Descent Optimization")
     print(f"   Optimizing for: {metric}")
+    print(f"   Parameters: {', '.join(param_names)}")
+    print(f"   Initial defaults: {defaults}")
     
-    results = []
+    all_results = []
+    current_best = defaults.copy()
+    pass_num = 0
     
-    for i, combo in enumerate(combinations):
-        params = dict(zip(param_names, combo))
+    # Cache to avoid re-running same parameter combinations
+    cache = {}  # key: tuple of sorted (param_name, param_value) pairs, value: stats dict
+    
+    def get_cache_key(params):
+        """Create hashable cache key from params dict"""
+        # Convert to tuple of (name, value) pairs, ensuring values are hashable
+        items = []
+        for key, value in sorted(params.items()):
+            # Convert numpy types to Python types for hashing
+            if hasattr(value, 'item'):  # numpy scalar
+                value = value.item()
+            items.append((key, value))
+        return tuple(items)
+    
+    while pass_num < max_passes:
+        pass_num += 1
+        print(f"\n--- Pass {pass_num} ---")
+        previous_best = current_best.copy()
         
-        # Run backtest
-        tester = StrategyTester(**tester_config)
-        tester.run(strategy_func, params)
-        stats = tester.get_stats(plot=False)
+        # Optimize each parameter in sequence
+        for param_name in param_names:
+            print(f"  Optimizing {param_name}... \n", end=' ')
+            
+            # Test all values for this parameter, keeping others at current best
+            param_results = []
+            
+            for param_value in param_grid[param_name]:
+                # Create params dict with current best values, but override this parameter
+                test_params = current_best.copy()
+                test_params[param_name] = param_value
+                
+                # Check cache first
+                cache_key = get_cache_key(test_params)
+                was_cached = cache_key in cache
+                
+                if was_cached:
+                    # Use cached result
+                    stats = cache[cache_key]
+                else:
+                    # Run backtest
+                    tester = StrategyTester(**tester_config)
+                    tester.run(strategy_func, test_params)
+                    stats = tester.get_stats(plot=False)
+                    # Cache the result
+                    if stats:
+                        cache[cache_key] = stats
+                
+                if stats:
+                    result = {**test_params, **stats}
+                    param_results.append(result)
+                    # Only append to all_results if it wasn't cached (avoid duplicates)
+                    if not was_cached:
+                        all_results.append(result)
+            
+            # Find best value for this parameter
+            if param_results:
+                param_df = pd.DataFrame(param_results)
+                best_row = param_df.loc[param_df[metric].idxmax()]
+                best_value = best_row[param_name]
+                best_metric = best_row[metric]
+                
+                current_best[param_name] = best_value
+                print(f"\nbest = {best_value} ({metric} = {best_metric:.4f})\n")
+            else:
+                print("no valid results")
         
-        if stats:
-            result = {**params, **stats}
-            results.append(result)
+        # Check for convergence
+        if current_best == previous_best:
+            print(f"\n✓ Converged after {pass_num} passes")
+            print(f"   Final parameters: {current_best}")
+            break
         
-        # Progress
-        if (i + 1) % 10 == 0:
-            print(f"   Progress: {i+1}/{len(combinations)}")
+        print(f"   Updated: {current_best}")
     
-    results_df = pd.DataFrame(results)
-    results_df = results_df.sort_values(metric, ascending=False)
+    if pass_num >= max_passes:
+        print(f"\n⚠ Reached max passes ({max_passes})")
+        print(f"   Final parameters: {current_best}")
     
-    print(f"✓ Optimization complete")
+    # Return all results sorted by metric
+    results_df = pd.DataFrame(all_results)
+    if not results_df.empty:
+        results_df = results_df.sort_values(metric, ascending=False)
+        total_tests = len(all_results)
+        unique_combinations = len(cache)
+        print(f"\n✓ Optimization complete ({total_tests} total tests, {unique_combinations} unique combinations)")
+    
     return results_df
 
 
@@ -156,8 +242,10 @@ def plot_parameter_sensitivity(results_df, param_name, metric='sharpe_ratio'):
 
 
 # ===== USAGE: PARAMETER OPTIMIZATION =====
-#from parameter_optimizer import optimize_parameters, plot_parameter_sensitivity
-#from strategies.opening_range_breakout_strategy import opening_range_breakout_strategy
+# from parameter_optimizer import optimize_parameters, plot_parameter_sensitivity
+# from strategies.opening_range_breakout_strategy.variant_1 import opening_range_breakout_strategy as variant_1_strategy
+# from strategies.opening_range_breakout_strategy.variant_2 import opening_range_breakout_strategy as variant_2_strategy
+
 
 # tester_config = {
 #     'symbols': ['SPY'],
@@ -171,22 +259,22 @@ def plot_parameter_sensitivity(results_df, param_name, metric='sharpe_ratio'):
 #     'opening_range_minutes': [15, 30, 60],
 #     'breakout_buffer': [0, 0.2, 0.4],
 #     'reversion_multiple': [0.3, 0.5, 0.75],
-#     'cash_allocation': [0.5, 0.75, 0.95],
+#     'max_positions': [1, 3, 5],
 #     'exit_time': ['15:00', '15:30', '15:45']
 # }
 
 # results = optimize_parameters(
 #     tester_config,
-#     opening_range_breakout_strategy,
+#     variant_1_strategy,
 #     param_grid,
 #     metric='sharpe_ratio'
 # )
 
 # # View top 10 results
 # print("\nTop 10 Parameter Combinations:")
-# print(results[['opening_range_minutes', 'breakout_buffer', 'reversion_multiple', 
-#                'cash_allocation', 'exit_time',
-#                'sharpe_ratio', 'total_return', 'max_drawdown', 'win_rate']].head(10))
+# results[['opening_range_minutes', 'breakout_buffer', 'reversion_multiple', 
+#                'max_positions', 'exit_time',
+#                'sharpe_ratio', 'total_return', 'max_drawdown', 'win_rate']].head(10)
 
 
 

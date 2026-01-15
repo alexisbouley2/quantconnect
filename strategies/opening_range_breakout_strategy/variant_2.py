@@ -2,30 +2,48 @@
 from AlgorithmImports import *
 # endregion
 
+from datetime import datetime, time, timedelta
+
 def opening_range_breakout_strategy(tester, current_bars, params):
     """
-    Opening range breakout strategy
+    Opening range breakout strategy - Variant 2
+    
+    Reversion threshold based on price percentage:
+    reversion_threshold = high_water_mark * reversion_multiple
+    
+    This variant uses a percentage of the current price (high water mark) to determine
+    when to exit, making it proportional to the raw price movement.
     
     Params:
         - opening_range_minutes: Duration of opening range
         - breakout_buffer: Buffer as fraction of OR range
-        - reversion_multiple: Exit threshold as multiple of OR range
-        - exit_time: Time to force exit
-        - cash_allocation: Fraction of cash to use per position (0.0-1.0, default: 0.95)
+        - reversion_multiple: Exit threshold as percentage of high water mark
+        - exit_time: Time to force exit (e.g., '15:30')
+        - max_positions: Maximum number of concurrent positions (default: 3)
+          Cash allocation per position = available_cash / max_positions
     """
     orders = []
     
-    opening_range_minutes = params.get('opening_range_minutes', 30)
+    opening_range_minutes = int(params.get('opening_range_minutes', 30))
     breakout_buffer = params.get('breakout_buffer', 0.2)
     reversion_multiple = params.get('reversion_multiple', 0.5)
     exit_time_str = params.get('exit_time', '15:30')
-    cash_allocation = params.get('cash_allocation', 0.95)  # Strategy controls position sizing
+    max_positions = int(params.get('max_positions', 3))
     exit_hour, exit_min = map(int, exit_time_str.split(':'))
     exit_time = time(exit_hour, exit_min)
+    
+    # Calculate cash allocation per position
+    cash_allocation = 1.0 / max_positions
     
     market_open = time(9, 30)
     opening_range_end = (datetime.combine(datetime.today(), market_open) + 
                          timedelta(minutes=opening_range_minutes)).time()
+    
+    # Track symbols already traded today (to prevent re-entry on same day)
+    current_date = tester.current_time.date() if tester.current_time else None
+    if not hasattr(tester, '_traded_symbols_today') or tester._traded_symbols_today.get('date') != current_date:
+        tester._traded_symbols_today = {'date': current_date, 'symbols': set()}
+    traded_today = tester._traded_symbols_today['symbols']
     
     for symbol, bar in current_bars.items():
         current_time = bar.name.time() if hasattr(bar.name, 'time') else tester.current_time.time()
@@ -59,10 +77,24 @@ def opening_range_breakout_strategy(tester, current_bars, params):
                 'price': bar['close'],
                 'metadata': {'exit_reason': 'time_exit'}
             })
+            traded_today.add(symbol)  # Mark as traded today (prevents re-entry)
+            continue
+        
+        # Skip entry if past exit time (prevent re-entry after exit)
+        if current_time >= exit_time:
             continue
         
         # Entry logic
         if not position:
+            # Skip if we've already traded this symbol today (prevent re-entry)
+            if symbol in traded_today:
+                continue
+            
+            # Check if we're at max positions limit
+            open_positions_count = tester.get_open_positions_count()
+            if open_positions_count >= max_positions:
+                continue  # Skip this signal, already at max positions
+            
             # Build order dict with position sizing (strategy controls this)
             order_dict = {
                 'symbol': symbol,
@@ -79,14 +111,15 @@ def opening_range_breakout_strategy(tester, current_bars, params):
             if bar['close'] > breakout_long:
                 order_dict['action'] = 'buy'
                 orders.append(order_dict.copy())
+                traded_today.add(symbol)  # Mark as traded today
             elif bar['close'] < breakout_short:
                 order_dict['action'] = 'sell'
                 orders.append(order_dict.copy())
+                traded_today.add(symbol)  # Mark as traded today
         
         # Exit logic
         else:
             metadata = position.metadata
-            reversion_threshold = metadata['or_range'] * reversion_multiple
             
             if position.direction == 'long':
                 # Update high water mark
@@ -94,8 +127,11 @@ def opening_range_breakout_strategy(tester, current_bars, params):
                     tester.update_position_metadata(symbol, {'high_water_mark': bar['close']})
                     metadata['high_water_mark'] = bar['close']
                 
-                # Check reversion
+                # Variant 2: Reversion threshold based on current high water mark price percentage
+                reversion_threshold = metadata['high_water_mark'] * reversion_multiple
                 reversion_level = metadata['high_water_mark'] - reversion_threshold
+                
+                # Check reversion
                 if bar['close'] < reversion_level:
                     orders.append({
                         'symbol': symbol,
@@ -103,6 +139,7 @@ def opening_range_breakout_strategy(tester, current_bars, params):
                         'price': bar['close'],
                         'metadata': {'exit_reason': 'reversion'}
                     })
+                    traded_today.add(symbol)  # Mark as traded today (prevents re-entry)
             
             else:  # short
                 # Update low water mark
@@ -110,8 +147,11 @@ def opening_range_breakout_strategy(tester, current_bars, params):
                     tester.update_position_metadata(symbol, {'high_water_mark': bar['close']})
                     metadata['high_water_mark'] = bar['close']
                 
-                # Check reversion
+                # Variant 2: Reversion threshold based on current low water mark price percentage
+                reversion_threshold = metadata['high_water_mark'] * reversion_multiple
                 reversion_level = metadata['high_water_mark'] + reversion_threshold
+                
+                # Check reversion
                 if bar['close'] > reversion_level:
                     orders.append({
                         'symbol': symbol,
@@ -119,16 +159,15 @@ def opening_range_breakout_strategy(tester, current_bars, params):
                         'price': bar['close'],
                         'metadata': {'exit_reason': 'reversion'}
                     })
+                    traded_today.add(symbol)  # Mark as traded today (prevents re-entry)
     
     return orders
 
 
-
 # ===== USAGE EXAMPLE =====
 # from tester import StrategyTester
-# from strategies.opening_range_breakout_strategy import opening_range_breakout_strategy
-
-# Single backtest
+# from strategies.opening_range_breakout_strategy.variant_2 import opening_range_breakout_strategy
+#
 # tester = StrategyTester(
 #     symbols=['SPY'],
 #     start_date=(2023, 1, 1),
@@ -136,15 +175,16 @@ def opening_range_breakout_strategy(tester, current_bars, params):
 #     initial_cash=10000,
 #     resolution='minute'
 # )
-
+#
 # params = {
 #     'opening_range_minutes': 30,
 #     'breakout_buffer': 0.2,
-#     'reversion_multiple': 0.5,
+#     'reversion_multiple': 0.02,  # 2% of price (adjust for price-based threshold)
 #     'exit_time': '15:30',
-#     'cash_allocation': 0.95  # Use 95% of available cash per position
+#     'max_positions': 3  # Allocates 1/3 of cash per position
 # }
-
+#
 # tester.run(opening_range_breakout_strategy, params)
 # stats = tester.get_stats(plot=True)
 # tester.print_stats(stats)
+
