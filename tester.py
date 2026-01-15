@@ -131,7 +131,13 @@ class StrategyTester:
         Args:
             strategy_func: Function with signature:
                 def strategy(tester, current_bars, params) -> List[Order]
-                where Order is a dict: {'symbol', 'action', 'quantity', 'metadata'}
+                where Order is a dict: {
+                    'symbol': str,
+                    'action': 'buy'|'sell'|'close',
+                    'price': float (optional),
+                    'cash_allocation': float (optional, 0.0-1.0, fraction of cash),
+                    'metadata': dict (optional)
+                }
             strategy_params: Dictionary of parameters to pass to strategy
             
         Returns:
@@ -184,19 +190,32 @@ class StrategyTester:
         return self
     
     def _execute_order(self, order: Dict):
-        """Execute a single order"""
+        """
+        Execute a single order
+        
+        Required order fields:
+        - 'symbol': str
+        - 'action': 'buy' | 'sell' | 'close'
+        - 'cash_allocation': float in [0.0, 1.0] for new positions ('buy'/'sell')
+        Optional:
+        - 'price': float override (otherwise current close)
+        - 'metadata': dict stored on the Position
+        """
         symbol = order['symbol']
         action = order['action']  # 'buy', 'sell', 'close'
         price = order.get('price')  # If None, use current market price
         metadata = order.get('metadata', {})
-        
+
         current_bar = self.data[symbol].loc[self.current_time]
         if price is None:
             price = current_bar['close']
-        
+
+
         if action == 'buy' and symbol not in self.positions:
-            # Open long position
-            quantity = int(self.cash * 0.95 / price)  # Use 95% of cash
+            # Open long position       
+            cash_to_use = self.cash * order['cash_allocation']  
+            quantity = int(cash_to_use / price)
+
             if quantity > 0:
                 cost = quantity * price
                 self.cash -= cost
@@ -210,9 +229,15 @@ class StrategyTester:
                 )
                 
         elif action == 'sell' and symbol not in self.positions:
-            # Open short position
-            quantity = int(self.cash * 0.95 / price)
+            # Open short position      
+            cash_to_use = self.cash * order['cash_allocation']  
+            quantity = int(cash_to_use / price)
+                
             if quantity > 0:
+                # For short positions, we need to hold cash as collateral/margin
+                # Typically this is the value of the short position
+                cost = quantity * price
+                self.cash -= cost
                 self.positions[symbol] = Position(
                     symbol=symbol,
                     direction='short',
@@ -229,11 +254,13 @@ class StrategyTester:
             if position.direction == 'long':
                 pnl = (price - position.entry_price) * position.quantity
                 return_pct = (price - position.entry_price) / position.entry_price
+                # Return the original cost plus profit
+                self.cash += position.entry_price * position.quantity + pnl
             else:  # short
                 pnl = (position.entry_price - price) * position.quantity
                 return_pct = (position.entry_price - price) / position.entry_price
-            
-            self.cash += position.entry_price * position.quantity + pnl
+                # Return the collateral plus profit
+                self.cash += position.entry_price * position.quantity + pnl
             
             trade = Trade(
                 symbol=symbol,

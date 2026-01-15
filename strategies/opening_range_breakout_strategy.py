@@ -11,6 +11,7 @@ def opening_range_breakout_strategy(tester, current_bars, params):
         - breakout_buffer: Buffer as fraction of OR range
         - reversion_multiple: Exit threshold as multiple of OR range
         - exit_time: Time to force exit
+        - cash_allocation: Fraction of cash to use per position (0.0-1.0, default: 0.95)
     """
     orders = []
     
@@ -18,6 +19,7 @@ def opening_range_breakout_strategy(tester, current_bars, params):
     breakout_buffer = params.get('breakout_buffer', 0.2)
     reversion_multiple = params.get('reversion_multiple', 0.5)
     exit_time_str = params.get('exit_time', '15:30')
+    cash_allocation = params.get('cash_allocation', 0.95)  # Strategy controls position sizing
     exit_hour, exit_min = map(int, exit_time_str.split(':'))
     exit_time = time(exit_hour, exit_min)
     
@@ -61,30 +63,25 @@ def opening_range_breakout_strategy(tester, current_bars, params):
         
         # Entry logic
         if not position:
+            # Build order dict with position sizing (strategy controls this)
+            order_dict = {
+                'symbol': symbol,
+                'price': bar['close'],
+                'cash_allocation': cash_allocation,
+                'metadata': {
+                    'or_high': or_high,
+                    'or_low': or_low,
+                    'or_range': or_range,
+                    'high_water_mark': bar['close']
+                }
+            }
+            
             if bar['close'] > breakout_long:
-                orders.append({
-                    'symbol': symbol,
-                    'action': 'buy',
-                    'price': bar['close'],
-                    'metadata': {
-                        'or_high': or_high,
-                        'or_low': or_low,
-                        'or_range': or_range,
-                        'high_water_mark': bar['close']
-                    }
-                })
+                order_dict['action'] = 'buy'
+                orders.append(order_dict.copy())
             elif bar['close'] < breakout_short:
-                orders.append({
-                    'symbol': symbol,
-                    'action': 'sell',
-                    'price': bar['close'],
-                    'metadata': {
-                        'or_high': or_high,
-                        'or_low': or_low,
-                        'or_range': or_range,
-                        'high_water_mark': bar['close']
-                    }
-                })
+                order_dict['action'] = 'sell'
+                orders.append(order_dict.copy())
         
         # Exit logic
         else:
@@ -144,7 +141,8 @@ def opening_range_breakout_strategy(tester, current_bars, params):
 #     'opening_range_minutes': 30,
 #     'breakout_buffer': 0.2,
 #     'reversion_multiple': 0.5,
-#     'exit_time': '15:30'
+#     'exit_time': '15:30',
+#     'cash_allocation': 0.95  # Use 95% of available cash per position
 # }
 
 # tester.run(opening_range_breakout_strategy, params)
