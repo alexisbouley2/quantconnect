@@ -45,18 +45,19 @@ def overnight_gap_mean_reverse(tester, current_bars, params):
     price_history = gap_data['price_history']
     
     current_time_obj = tester.current_time.time()
+
+    for symbol, bar in current_bars.items():
+        if symbol not in price_history:
+            price_history[symbol] = []
+        price_history[symbol].append(bar['close'])
+        if len(price_history[symbol]) > volatility_window:
+            price_history[symbol] = price_history[symbol][-volatility_window:]
+    
     
     # Update previous close at market close
     if current_time_obj == market_close:
         for symbol, bar in current_bars.items():
             previous_close[symbol] = bar['close']
-            # Update price history for volatility calculation
-            if symbol not in price_history:
-                price_history[symbol] = []
-            price_history[symbol].append(bar['close'])
-            # Keep only rolling window
-            if len(price_history[symbol]) > volatility_window:
-                price_history[symbol] = price_history[symbol][-volatility_window:]
     
     # Exit logic: Close all positions at exit time
     if current_time_obj >= exit_time:
