@@ -45,13 +45,6 @@ def overnight_gap_mean_reverse(tester, current_bars, params):
     price_history = gap_data['price_history']
     
     current_time_obj = tester.current_time.time()
-
-    for symbol, bar in current_bars.items():
-        if symbol not in price_history:
-            price_history[symbol] = []
-        price_history[symbol].append(bar['close'])
-        if len(price_history[symbol]) > volatility_window:
-            price_history[symbol] = price_history[symbol][-volatility_window:]
     
     
     # Update previous close at market close
@@ -68,7 +61,6 @@ def overnight_gap_mean_reverse(tester, current_bars, params):
                     'action': 'close',
                     'price': bar['close']
                 })
-        return orders
     
     # Entry logic: At 9:31, find all symbols with unusual gaps and enter positions
     # Check if we're at entry time (9:31) - allow for slight timing differences
@@ -98,8 +90,8 @@ def overnight_gap_mean_reverse(tester, current_bars, params):
             
             if volatility is None or volatility <= 0:
                 continue
-            
-            # Check if gap is unusual (abs(gap) > sigma * volatility)
+
+
             if abs(gap) > sigma * volatility:
                 # Determine action based on gap direction
                 if gap > 0:
@@ -129,6 +121,13 @@ def overnight_gap_mean_reverse(tester, current_bars, params):
                     }
                 })
     
+    for symbol, bar in current_bars.items():
+        if symbol not in price_history:
+            price_history[symbol] = []
+        price_history[symbol].append(bar['close'])
+        if len(price_history[symbol]) > volatility_window:
+            price_history[symbol] = price_history[symbol][-volatility_window:]
+            
     return orders
 
 
