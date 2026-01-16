@@ -14,8 +14,8 @@ This package contains different variants of the opening range breakout strategy:
   (reversion_threshold = high_water_mark * reversion_multiple)
 """
 
-from .variant_1 import opening_range_breakout_strategy as variant_1
-from .variant_2 import opening_range_breakout_strategy as variant_2
+from .variant_1 import opening_range_breakout as variant_1
+from .variant_2 import opening_range_breakout as variant_2
 
 __all__ = ['variant_1', 'variant_2']
 

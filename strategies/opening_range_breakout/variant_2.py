@@ -4,7 +4,7 @@ from AlgorithmImports import *
 
 from datetime import datetime, time, timedelta
 
-def opening_range_breakout_strategy(tester, current_bars, params):
+def opening_range_breakout(tester, current_bars, params):
     """
     Opening range breakout strategy - Variant 2
     
@@ -166,7 +166,7 @@ def opening_range_breakout_strategy(tester, current_bars, params):
 
 # ===== USAGE EXAMPLE =====
 # from tester import StrategyTester
-# from strategies.opening_range_breakout_strategy.variant_2 import opening_range_breakout_strategy
+# from strategies.opening_range_breakout.variant_2 import opening_range_breakout
 #
 # tester = StrategyTester(
 #     symbols=['SPY'],
@@ -185,7 +185,7 @@ def opening_range_breakout_strategy(tester, current_bars, params):
 #     'max_positions': 3  # Allocates 1/3 of cash per position
 # }
 #
-# tester.run(opening_range_breakout_strategy, params)
+# tester.run(opening_range_breakout, params)
 # stats = tester.get_stats(plot=True)
 # tester.print_stats(stats)
 

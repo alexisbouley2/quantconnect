@@ -243,8 +243,8 @@ def plot_parameter_sensitivity(results_df, param_name, metric='sharpe_ratio'):
 
 # ===== USAGE: PARAMETER OPTIMIZATION =====
 # from parameter_optimizer import optimize_parameters, plot_parameter_sensitivity
-# from strategies.opening_range_breakout_strategy.variant_1 import opening_range_breakout_strategy as variant_1_strategy
-# from strategies.opening_range_breakout_strategy.variant_2 import opening_range_breakout_strategy as variant_2_strategy
+# from strategies.opening_range_breakout.variant_1 import opening_range_breakout as variant_1_strategy
+# from strategies.opening_range_breakout.variant_2 import opening_range_breakout as variant_2_strategy
 
 
 # tester_config = {

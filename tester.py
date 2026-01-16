@@ -34,6 +34,7 @@ class Trade:
     quantity: int
     pnl: float
     return_pct: float
+    portfolio_weight: float = None  # Portfolio weight at entry (for weighted statistics)
     metadata: Dict = None
 
 # ===== MAIN STRATEGY TESTER CLASS =====
@@ -227,6 +228,10 @@ class StrategyTester:
 
             if quantity > 0:
                 cost = quantity * price
+                
+
+                metadata['portfolio_weight_at_entry'] = order.get('cash_allocation', 0.0)
+                
                 self.cash -= cost
                 self.positions[symbol] = Position(
                     symbol=symbol,
@@ -246,6 +251,10 @@ class StrategyTester:
                 # For short positions, we need to hold cash as collateral/margin
                 # Typically this is the value of the short position
                 cost = quantity * price
+                
+                # Store portfolio weight (approximate using cash_allocation)
+                metadata['portfolio_weight_at_entry'] = order.get('cash_allocation', 0.0)
+                
                 self.cash -= cost
                 self.positions[symbol] = Position(
                     symbol=symbol,
@@ -271,6 +280,9 @@ class StrategyTester:
                 # Return the collateral plus profit
                 self.cash += position.entry_price * position.quantity + pnl
             
+            # Extract portfolio weight from position metadata
+            portfolio_weight = position.metadata['portfolio_weight_at_entry']
+            
             trade = Trade(
                 symbol=symbol,
                 direction=position.direction,
@@ -281,6 +293,7 @@ class StrategyTester:
                 quantity=position.quantity,
                 pnl=pnl,
                 return_pct=return_pct,
+                portfolio_weight=portfolio_weight,
                 metadata=position.metadata
             )
             
@@ -322,7 +335,8 @@ class StrategyTester:
                 'entry_time': t.entry_time,
                 'exit_time': t.exit_time,
                 'return': t.return_pct,
-                'pnl': t.pnl
+                'pnl': t.pnl,
+                'portfolio_weight': t.portfolio_weight
             }
             for t in self.trades
         ])
@@ -334,18 +348,54 @@ class StrategyTester:
         losses = trades_df[trades_df['return'] < 0]
         
         returns = trades_df['return']
+        weights = trades_df['portfolio_weight']
+        
+        # Normalize weights to sum to 1.0 (handle cases where they might not)
+        weights_normalized = weights / weights.sum() if weights.sum() > 0 else weights
+        
+        # Calculate weighted portfolio returns (position return * portfolio weight)
+        portfolio_returns = returns * weights_normalized
+        
+        # Calculate weighted statistics
+        weighted_mean_return = portfolio_returns.sum()  # Sum of (return * weight) = weighted mean
+        
+        # For weighted std: need to calculate weighted variance, then sqrt
+        # Variance = sum(weights * (returns - weighted_mean)^2)
+        weighted_variance = (weights_normalized * (returns - weighted_mean_return) ** 2).sum()
+        weighted_std = np.sqrt(weighted_variance) if weighted_variance > 0 else 0
+        
+        # Calculate weighted avg_win and avg_loss
+        if len(wins) > 0:
+            win_weights_sum = wins['portfolio_weight'].sum()
+            if win_weights_sum > 0:
+                win_weights = wins['portfolio_weight'] / win_weights_sum
+            else:
+                win_weights = pd.Series([1.0 / len(wins)] * len(wins), index=wins.index)
+            weighted_avg_win = (wins['return'] * win_weights).sum()
+        else:
+            weighted_avg_win = 0
+            
+        if len(losses) > 0:
+            loss_weights_sum = losses['portfolio_weight'].sum()
+            if loss_weights_sum > 0:
+                loss_weights = losses['portfolio_weight'] / loss_weights_sum
+            else:
+                loss_weights = pd.Series([1.0 / len(losses)] * len(losses), index=losses.index)
+            weighted_avg_loss = (losses['return'] * loss_weights).sum()
+        else:
+            weighted_avg_loss = 0
         
         stats = {
             'total_return': total_return,
             'num_trades': len(trades_df),
-            'win_rate': len(wins) / len(trades_df) if len(trades_df) > 0 else 0,
-            'avg_return': returns.mean(),
-            'avg_win': wins['return'].mean() if len(wins) > 0 else 0,
-            'avg_loss': losses['return'].mean() if len(losses) > 0 else 0,
-            'best_trade': returns.max(),
-            'worst_trade': returns.min(),
-            'sharpe_ratio': returns.mean() / returns.std() * np.sqrt(252) if returns.std() > 0 else 0,
-            'profit_factor': abs(wins['pnl'].sum() / losses['pnl'].sum()) if len(losses) > 0 and losses['pnl'].sum() != 0 else np.inf,
+            'win_rate': len(wins) / len(trades_df) if len(trades_df) > 0 else 0,  # Keep unweighted (percentage of trades)
+            'avg_return': weighted_mean_return,  # Weighted average portfolio return
+            'avg_win': weighted_avg_win,  # Weighted average of winning portfolio returns
+            'avg_loss': weighted_avg_loss,  # Weighted average of losing portfolio returns
+            'best_trade': returns.max(),  # Keep unweighted (best single position return)
+            'worst_trade': returns.min(),  # Keep unweighted (worst single position return)
+            'sharpe_ratio': (weighted_mean_return / weighted_std * np.sqrt(252)) if weighted_std > 0 else 0,  # Weighted Sharpe
+            'profit_factor': abs(wins['pnl'].sum() / losses['pnl'].sum()) if len(losses) > 0 and losses['pnl'].sum() != 0 else np.inf,  # PnL already in dollars, no weighting needed
         }
         
         # Max drawdown
